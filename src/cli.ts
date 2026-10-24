@@ -17,7 +17,7 @@ import { formatSchool, formatDisclosure, getParentDigest, getAreaReport, formatA
 import { evaluationGuide, parseEvaluationDocument, autoFetchEvaluation, listEvaluationDocs } from "./evaluation.js";
 import { achievementGuide } from "./achievement.js";
 import {
-  findNeisSchool, fetchSchedule, hasNeisKey, currentAcademicYear, formatSchedule,
+  findNeisSchool, fetchAcademicYearSchedule, hasNeisKey, currentAcademicYear, formatSchedule,
   fetchMeal, formatMeal, parseAvoid, todayKstYmd,
   fetchTimetable, weekRange, formatWeek, upcomingHighlights,
   fetchAreaExams, formatExamCalendar,
@@ -180,8 +180,7 @@ async function main() {
       const ns = await findNeisSchool(name, resolveSido(sido)?.name ?? sido, sgg);
       if (!ns) { console.error(`❌ NEIS에서 학교를 찾지 못했습니다: ${sido} ${name}`); process.exit(1); }
       const y = year ?? currentAcademicYear();
-      const lastFeb = new Date(y + 1, 2, 0).getDate();
-      const items = await fetchSchedule(ns.atptCode, ns.schoolCode, `${y}0301`, `${y + 1}02${lastFeb}`);
+      const items = await fetchAcademicYearSchedule(ns, y);
       console.log(formatSchedule(ns.name, y, items));
       break;
     }
@@ -215,10 +214,9 @@ async function main() {
       const today = todayKstYmd();
       const range = weekRange(today);
       const ay = currentAcademicYear();
-      const lastFeb = new Date(ay + 1, 2, 0).getDate();
       const [meals, sched] = await Promise.all([
         fetchMeal(ns.atptCode, ns.schoolCode, range.from, range.to),
-        fetchSchedule(ns.atptCode, ns.schoolCode, `${ay}0301`, `${ay + 1}02${lastFeb}`),
+        fetchAcademicYearSchedule(ns, ay),
       ]);
       const weekEvents = sched.filter((e) => e.date >= range.from && e.date <= range.to);
       const upcoming = upcomingHighlights(sched, today);

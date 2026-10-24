@@ -18,7 +18,7 @@ import { SchoolInfoClient, School, searchSchoolsByName } from "./client.js";
 import { API_TYPES, SCHOOL_KIND, SchoolKindName, findApiType, resolveSido } from "./codes.js";
 import { formatSchool, formatDisclosure, getParentDigest, getAreaReport, formatAreaReport } from "./index.js";
 import {
-  findNeisSchool, fetchSchedule, hasNeisKey, currentAcademicYear, formatSchedule,
+  findNeisSchool, fetchAcademicYearSchedule, hasNeisKey, currentAcademicYear, formatSchedule,
   fetchMeal, formatMeal, parseAvoid, todayKstYmd, addDaysYmd,
   fetchTimetable, weekRange, formatWeek, upcomingHighlights,
   fetchAreaExams, formatExamCalendar,
@@ -280,8 +280,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
         const ns = await findNeisSchool(name, resolveSido(sido)?.name ?? sido, sgg);
         if (!ns) return ok(`NEIS에서 학교를 찾지 못했습니다: ${sido} ${name}`);
         const y = year ?? currentAcademicYear();
-        const lastFeb = new Date(y + 1, 2, 0).getDate(); // 다음해 2월 말일(윤년 29 포함)
-        const items = await fetchSchedule(ns.atptCode, ns.schoolCode, `${y}0301`, `${y + 1}02${lastFeb}`);
+        const items = await fetchAcademicYearSchedule(ns, y);
         return ok(formatSchedule(ns.name, y, items));
       } catch (e: any) {
         return err(`오류: ${e.message}`);
@@ -342,10 +341,9 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
         const today = todayKstYmd();
         const range = weekRange(today);
         const ay = currentAcademicYear();
-        const lastFeb = new Date(ay + 1, 2, 0).getDate();
         const [meals, sched] = await Promise.all([
           fetchMeal(ns.atptCode, ns.schoolCode, range.from, range.to),
-          fetchSchedule(ns.atptCode, ns.schoolCode, `${ay}0301`, `${ay + 1}02${lastFeb}`),
+          fetchAcademicYearSchedule(ns, ay),
         ]);
         const weekEvents = sched.filter((e) => e.date >= range.from && e.date <= range.to);
         const upcoming = upcomingHighlights(sched, today);

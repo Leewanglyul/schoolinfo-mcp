@@ -11,7 +11,7 @@ import { createClient, formatSchool, formatDisclosure, getParentDigest, getAreaS
 import { SCHOOL_KIND, SchoolKindName } from "./codes.js";
 import { listEvaluationDocs, fetchEvaluationBySeq, evaluationGuide, downloadEvaluationFile, structureEvaluation, MAX_ALL_DOCS, type EvaluationResult } from "./evaluation.js";
 import type { School } from "./client.js";
-import { findNeisSchool, fetchSchedule, hasNeisKey, currentAcademicYear, fetchMeal, todayKstYmd, addDaysYmd, weekRange, formatWeek, upcomingHighlights, fetchAreaExams, formatExamCalendar } from "./neis.js";
+import { findNeisSchool, fetchAcademicYearSchedule, hasNeisKey, currentAcademicYear, fetchMeal, todayKstYmd, addDaysYmd, weekRange, formatWeek, upcomingHighlights, fetchAreaExams, formatExamCalendar } from "./neis.js";
 import { renderPage } from "./web.js";
 import { findAdmissionUniversity, searchAdmissionMajors, listAdmissionUniversities, commonSubjects } from "./admission.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -418,8 +418,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           const ns = await findNeisSchool(school.name, resolveSido(sido)?.name ?? sido, sgg);
           if (!ns) return json(res, 200, { school: school.name, items: [], note: "NEIS에서 해당 학교를 찾지 못했습니다." });
           const y = year ?? currentAcademicYear();
-          const lastFeb = new Date(y + 1, 2, 0).getDate(); // 다음해 2월 말일(윤년 29 포함)
-          const items = await fetchSchedule(ns.atptCode, ns.schoolCode, `${y}0301`, `${y + 1}02${lastFeb}`);
+          const items = await fetchAcademicYearSchedule(ns, y);
           return json(res, 200, { school: school.name, year: y, items, upcoming: upcomingHighlights(items) });
         } catch (e: any) {
           // 상세는 로그에만, 사용자에겐 일반 문구 (전역 catch와 동일한 정보-비노출 정책)
@@ -461,10 +460,9 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           const today = todayKstYmd();
           const range = weekRange(today);
           const ay = currentAcademicYear();
-          const lastFeb = new Date(ay + 1, 2, 0).getDate();
           const [meals, sched] = await Promise.all([
             fetchMeal(ns.atptCode, ns.schoolCode, range.from, range.to),
-            fetchSchedule(ns.atptCode, ns.schoolCode, `${ay}0301`, `${ay + 1}02${lastFeb}`),
+            fetchAcademicYearSchedule(ns, ay),
           ]);
           const weekEvents = sched.filter((e) => e.date >= range.from && e.date <= range.to);
           const upcoming = upcomingHighlights(sched, today);

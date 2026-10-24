@@ -50,6 +50,24 @@ export function currentAcademicYear(): number {
   return kst.getUTCMonth() < 2 ? kst.getUTCFullYear() - 1 : kst.getUTCFullYear();
 }
 
+/**
+ * 학년도 기간 (3월 1일 ~ 익년 2월 말일, YYYYMMDD). 윤년 29일 포함.
+ * server/mcpServer/cli에 같은 계산이 7번 복붙돼 있어 한 곳으로 모았다.
+ */
+export function academicYearRange(year: number): { from: string; to: string } {
+  const lastFeb = new Date(year + 1, 2, 0).getDate();
+  return { from: `${year}0301`, to: `${year + 1}02${String(lastFeb).padStart(2, "0")}` };
+}
+
+/** 한 학년도 전체 학사일정 조회 (기간 계산 포함) */
+export async function fetchAcademicYearSchedule(
+  school: { atptCode: string; schoolCode: string },
+  year: number
+): Promise<ScheduleItem[]> {
+  const { from, to } = academicYearRange(year);
+  return fetchSchedule(school.atptCode, school.schoolCode, from, to);
+}
+
 export interface NeisSchool {
   atptCode: string; // ATPT_OFCDC_SC_CODE (시도교육청코드)
   schoolCode: string; // SD_SCHUL_CODE (행정표준 학교코드)
@@ -530,9 +548,7 @@ export async function fetchAreaExams(
   schools: { name: string; atptCode: string; schoolCode: string }[],
   year: number
 ): Promise<SchoolExams[]> {
-  const lastFeb = new Date(year + 1, 2, 0).getDate();
-  const from = `${year}0301`;
-  const to = `${year + 1}02${lastFeb}`;
+  const { from, to } = academicYearRange(year);
   const results = await Promise.all(
     schools.map(async (s): Promise<SchoolExams> => {
       try {
