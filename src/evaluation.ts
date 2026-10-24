@@ -100,7 +100,7 @@ export interface SubmissionRound {
 }
 
 /** #select_trans_dt 드롭다운에서 제출 회차 목록을 파싱한다 */
-function parseSubmissionRounds(html: string): SubmissionRound[] {
+export function parseSubmissionRounds(html: string): SubmissionRound[] {
   const sel = html.match(/<select[^>]*id="select_trans_dt"[^>]*>([\s\S]*?)<\/select>/i);
   if (!sel) return [];
   const rounds: SubmissionRound[] = [];
@@ -162,7 +162,7 @@ export async function fetchEvaluationFiles(
   return { files, downloadParams, rounds };
 }
 
-function parseFileList(html: string): EvaluationFile[] {
+export function parseFileList(html: string): EvaluationFile[] {
   const files: EvaluationFile[] = [];
   const seen = new Set<string>();
   // <a ... onclick="getEiFile43('5')...">파일명.hwpx(89 KB)</a>
