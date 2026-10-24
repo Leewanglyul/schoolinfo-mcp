@@ -10,7 +10,7 @@ import { readFileSync } from "fs";
 import { createClient, formatSchool, formatDisclosure, getParentDigest, getAreaStudents, getAreaReport, formatAreaReport, REGIONS, searchSchoolsByName, resolveSido } from "./index.js";
 import { SCHOOL_KIND, SchoolKindName } from "./codes.js";
 import { listEvaluationDocs, fetchEvaluationBySeq, evaluationGuide, downloadEvaluationFile, structureEvaluation, MAX_ALL_DOCS, type EvaluationResult } from "./evaluation.js";
-import type { School } from "./client.js";
+import { pickSchool, type School } from "./client.js";
 import { findNeisSchool, fetchAcademicYearSchedule, hasNeisKey, currentAcademicYear, fetchMeal, todayKstYmd, addDaysYmd, weekRange, formatWeek, upcomingHighlights, fetchAreaExams, formatExamCalendar } from "./neis.js";
 import { renderPage } from "./web.js";
 import { findAdmissionUniversity, searchAdmissionMajors, listAdmissionUniversities, commonSubjects } from "./admission.js";
@@ -367,11 +367,8 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       }
 
       // 학교 1곳 해석
-      const resolve = async () => {
-        const list = await client.searchSchools({ sido, sgg, kind, name: name || undefined });
-        if (!list.length) return null;
-        return list.find((s) => s.name === name) ?? list[0];
-      };
+      const resolve = async () =>
+        pickSchool(await client.searchSchools({ sido, sgg, kind, name: name || undefined }), name);
 
       // 원본 평가계획 파일 다운로드 (스트리밍) — 변환 없이 hwp/hwpx/pdf 원본 그대로
       if (url.pathname === "/api/download") {

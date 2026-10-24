@@ -178,6 +178,20 @@ export class SchoolInfoClient {
   }
 }
 
+/**
+ * 검색 결과에서 학교 1곳을 고른다: 이름 완전일치 우선, 없으면 첫 번째.
+ * (웹 /api와 MCP resolveSchool이 각자 같은 규칙을 들고 있어 한 곳으로 모았다)
+ */
+export function pickSchool(list: School[], name?: string): School | null {
+  if (!list.length) return null;
+  const q = (name ?? "").replace(/\s/g, "");
+  if (q) {
+    const exact = list.find((s) => s.name.replace(/\s/g, "") === q);
+    if (exact) return exact;
+  }
+  return list[0];
+}
+
 /** 전국 이름검색 결과 (지역/학교급 선택 없이 학교명만으로) */
 export interface SchoolHit {
   name: string; // SHL_NM

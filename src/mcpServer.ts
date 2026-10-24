@@ -14,7 +14,7 @@ import { z } from "zod";
 import pkg from "../package.json";
 import { readFileSync, statSync, realpathSync } from "fs";
 import { resolve, extname } from "path";
-import { SchoolInfoClient, School, searchSchoolsByName } from "./client.js";
+import { SchoolInfoClient, School, searchSchoolsByName, pickSchool } from "./client.js";
 import { API_TYPES, SCHOOL_KIND, SchoolKindName, findApiType, resolveSido } from "./codes.js";
 import { formatSchool, formatDisclosure, getParentDigest, getAreaReport, formatAreaReport } from "./index.js";
 import {
@@ -76,12 +76,10 @@ async function resolveSchool(
 ): Promise<{ school?: School; many?: School[] }> {
   const list = await client.searchSchools({ sido, sgg, kind, name });
   if (list.length === 0) return {};
-  if (list.length > 1) {
-    const exact = list.find((s) => s.name === name);
-    if (exact) return { school: exact };
-    return { many: list };
-  }
-  return { school: list[0] };
+  if (list.length === 1) return { school: list[0] };
+  // 여러 개면 완전일치만 자동 선택, 아니면 목록을 돌려 사용자가 고르게 한다 (웹과 달리 첫 번째를 임의 선택하지 않음)
+  const exact = pickSchool(list, name);
+  return exact && exact.name.replace(/\s/g, "") === name.replace(/\s/g, "") ? { school: exact } : { many: list };
 }
 
 /**
@@ -496,11 +494,13 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
     },
     READ_ONLY,
     async ({ sido, sgg, kind, name, year, semester, subject, grade, all, full }) => {
+      let resolved: School | undefined;
       try {
         const client = getClient();
         const { school, many } = await resolveSchool(client, sido, sgg, kind, name);
         if (many) return ok(`여러 학교가 검색됨:\n` + many.map((s) => `- ${s.name}`).join("\n"));
         if (!school) return ok(`학교를 찾을 수 없습니다: ${name}`);
+        resolved = school;
 
         const { docs, year: usedYear, chasu, rounds } = await listEvaluationDocs(school, year, EVAL_ITEM_SPEC, semester);
         const roundNote = chasu != null
@@ -583,12 +583,8 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
         }
         return ok(capText(parts.join("\n"), "subject=과목명, grade=학년으로 범위를 좁히거나 full 없이 다시 요청하세요."));
       } catch (e: any) {
-        // 자동 다운로드 실패 시 수동 안내로 폴백
-        try {
-          const client = getClient();
-          const { school } = await resolveSchool(client, sido, sgg, kind, name);
-          if (school) return ok(`⚠️ 자동 조회 실패: ${e.message}\n\n` + evaluationGuide(school, year));
-        } catch {}
+        // 자동 조회 실패 시 수동 안내로 폴백 — 이미 해석한 학교를 재사용(불필요한 재검색·외부 호출 제거)
+        if (resolved) return ok(`⚠️ 자동 조회 실패: ${e.message}\n\n` + evaluationGuide(resolved, year));
         return err(`오류: ${e.message}`);
       }
     }
@@ -610,11 +606,13 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
     },
     READ_ONLY,
     async ({ sido, sgg, kind, name, year, subject, all, full }) => {
+      let resolved: School | undefined;
       try {
         const client = getClient();
         const { school, many } = await resolveSchool(client, sido, sgg, kind, name);
         if (many) return ok(`여러 학교가 검색됨:\n` + many.map((s) => `- ${s.name}`).join("\n"));
         if (!school) return ok(`학교를 찾을 수 없습니다: ${name}`);
+        resolved = school;
 
         // 2-가 항목엔 편제표 + 연간학사일정이 섞여 올라오므로, 목록을 나열하기보다
         // 점수(curriculumScore)로 편제표 문서를 자동 선택한다. (subject/all로 수동 지정 가능)
@@ -650,12 +648,8 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
         }
         return ok(capText(parts.join("\n"), "subject=파일명 키워드로 문서를 특정하거나 full 없이 다시 요청하세요."));
       } catch (e: any) {
-        // 자동 조회 실패 시 수동 안내로 폴백
-        try {
-          const client = getClient();
-          const { school } = await resolveSchool(client, sido, sgg, kind, name);
-          if (school) return ok(`⚠️ 자동 조회 실패: ${e.message}\n\n` + evaluationGuide(school, year));
-        } catch {}
+        // 자동 조회 실패 시 수동 안내로 폴백 — 이미 해석한 학교를 재사용(불필요한 재검색·외부 호출 제거)
+        if (resolved) return ok(`⚠️ 자동 조회 실패: ${e.message}\n\n` + evaluationGuide(resolved, year));
         return err(`오류: ${e.message}`);
       }
     }
