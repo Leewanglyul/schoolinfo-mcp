@@ -233,6 +233,13 @@ function parseDownloadParams(
   return params;
 }
 
+/** 다운로드 응답이 문서가 아니라 HTML 페이지인지 (Content-Type 또는 선두 바이트로 판별) */
+export function looksLikeHtml(contentType: string | null | undefined, buffer: ArrayBuffer): boolean {
+  if (/text\/html/i.test(contentType ?? "")) return true;
+  const head = Buffer.from(buffer.slice(0, 512)).toString("latin1").trimStart().toLowerCase();
+  return head.startsWith("<!doctype html") || head.startsWith("<html") || head.startsWith("<script") || head.startsWith("<meta");
+}
+
 /** 특정 첨부파일 다운로드 (GET EiFileDownLoad) */
 export async function downloadEvaluationFile(
   downloadParams: Record<string, string>,
@@ -250,6 +257,12 @@ export async function downloadEvaluationFile(
   if (declared > MAX_DOWNLOAD_BYTES) throw new Error("파일이 너무 큽니다 (50MB 초과).");
   const buffer = await res.arrayBuffer();
   if (buffer.byteLength > MAX_DOWNLOAD_BYTES) throw new Error("파일이 너무 큽니다 (50MB 초과).");
+  // 학교알리미는 세션 만료·점검·파일 부재 시에도 HTTP 200 + HTML 안내 페이지를 준다.
+  // 이를 문서로 넘기면 kordoc이 "지원하지 않는 형식"으로 실패해 원인이 가려지므로 여기서 먼저 걸러낸다.
+  if (buffer.byteLength === 0) throw new Error("학교알리미가 빈 파일을 반환했습니다. 잠시 후 다시 시도하세요.");
+  if (looksLikeHtml(res.headers.get("content-type"), buffer)) {
+    throw new Error("학교알리미가 파일 대신 안내 페이지를 반환했습니다 (점검 중이거나 파일이 내려간 경우). 잠시 후 다시 시도하거나 공시 포털에서 직접 확인하세요.");
+  }
   // Content-Disposition에서 파일명 (RFC URL-encoded)
   let filename = `evaluation_${seq}`;
   const cd = res.headers.get("content-disposition") ?? "";
@@ -271,6 +284,8 @@ export interface EvaluationResult {
   evaluationSections: string[];
   /** 본문 추출이 빈약(이미지 PDF 추정)해 OCR/수동확인이 필요할 때 true */
   needsOcr?: boolean;
+  /** 문서 변환(kordoc) 자체가 실패한 경우 그 사유 — 깨진 파일·미지원 형식·암호화 등 */
+  parseError?: string;
 }
 
 /**
@@ -349,14 +364,33 @@ export async function fetchEvaluationBySeq(
   // filePath를 넘기지 않는다: 다운로드 파일명은 디스크에 없는 가짜 경로라
   // kordoc의 배포용 HWP COM 폴백이 존재하지 않는 파일을 열려 시도할 수 있음.
   // 포맷은 매직바이트로 자동 감지되므로 ArrayBuffer만으로 충분.
-  const parsed = await parse(buffer);
+  const parsed = await safeParse(buffer);
   const markdown = parsed.success ? parsed.markdown ?? "" : "";
-  return {
+  const result: EvaluationResult = {
     filename: filename || file.filename,
     fileType: parsed.fileType ?? "unknown",
     markdown,
     evaluationSections: extractEvaluationSections(markdown, spec.sectionKeywords),
   };
+  // 변환 실패를 빈 마크다운으로 삼키면 호출부가 "이미지 PDF 추정"으로 오진한다 → 사유를 실어 보낸다.
+  if (!parsed.success) result.parseError = parsed.error || "문서 변환에 실패했습니다.";
+  return result;
+}
+
+/** kordoc parse 래퍼 — 예외를 던지는 경우(손상 파일 등)도 success:false 결과로 정규화 */
+async function safeParse(
+  buffer: ArrayBuffer,
+  filePath?: string
+): Promise<{ success: boolean; markdown?: string; fileType?: string; error?: string }> {
+  try {
+    const r = await parse(buffer, filePath ? { filePath } : undefined);
+    // ParseResult는 성공/실패 유니온 — 실패 쪽엔 markdown이 없고 error만 있다
+    return r.success
+      ? { success: true, markdown: r.markdown, fileType: r.fileType }
+      : { success: false, fileType: r.fileType, error: r.error };
+  } catch (e: any) {
+    return { success: false, fileType: "unknown", error: String(e?.message ?? e) };
+  }
 }
 
 /**
@@ -399,7 +433,8 @@ export async function autoFetchEvaluation(
     if (!best) best = r;
   }
   // 모든 후보가 빈약 → 이미지 PDF 추정. 호출부가 수동 안내를 노출하도록 플래그를 싣는다.
-  if (best && best.markdown.trim().length < MIN_USEFUL_MD) best.needsOcr = true;
+  // (변환 자체가 실패한 경우는 parseError가 원인을 설명하므로 OCR 추정 플래그를 세우지 않는다)
+  if (best && !best.parseError && best.markdown.trim().length < MIN_USEFUL_MD) best.needsOcr = true;
   return best ? [best] : [];
 }
 
@@ -457,8 +492,9 @@ export async function parseEvaluationDocument(
   filePath?: string
 ): Promise<{ fileType: string; markdown: string; evaluationSections: string[] }> {
   const buf = input instanceof ArrayBuffer ? input : toArrayBuffer(input);
-  const result = await parse(buf, filePath ? { filePath } : undefined);
-  if (!result.success) throw new Error("문서 파싱 실패");
+  if (buf.byteLength === 0) throw new Error("빈 파일입니다.");
+  const result = await safeParse(buf, filePath);
+  if (!result.success) throw new Error(`문서 변환 실패: ${result.error ?? "알 수 없는 오류"}`);
   const markdown = result.markdown ?? "";
   return {
     fileType: result.fileType ?? "unknown",

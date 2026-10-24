@@ -118,7 +118,9 @@ function slimDocMarkdown(school: School, results: EvaluationResult[], year?: num
   const parts: string[] = [];
   for (const r of results) {
     parts.push(`## 📄 ${r.filename}`);
-    if (r.evaluationSections.length) {
+    if (r.parseError) {
+      parts.push(`\n> ⚠️ 이 파일은 자동 변환에 실패했습니다 (${r.parseError}). 원본을 내려받아 직접 확인하세요.\n`, evaluationGuide(school, year));
+    } else if (r.evaluationSections.length) {
       parts.push(`\n### 🎯 수행평가 관련\n`, r.evaluationSections.join("\n\n---\n\n"));
     } else if (r.markdown.trim().length < 200) {
       parts.push(`\n> ⚠️ 이 파일은 이미지로 된 PDF로 보여 자동 추출이 어렵습니다. 원본을 직접 확인하세요.\n`, evaluationGuide(school, year));

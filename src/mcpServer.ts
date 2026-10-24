@@ -517,6 +517,10 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
             parts.push(`### 🎯 수행평가 관련 (${r.evaluationSections.length}개)\n`);
             parts.push(r.evaluationSections.join("\n\n---\n\n"));
           }
+          if (r.parseError) {
+            parts.push(`\n> ⚠️ 문서 자동 변환 실패: ${r.parseError}\n> 원본 파일을 직접 확인하세요.\n`, evaluationGuide(school, year));
+            continue;
+          }
           if (r.needsOcr) {
             parts.push(`\n> ⚠️ 본문 추출이 빈약합니다(이미지 PDF 추정). 원본 직접 확인을 권장합니다.\n`, evaluationGuide(school, year));
           }
@@ -570,6 +574,10 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
           if (r.evaluationSections.length) {
             parts.push(`### 🎯 교육과정 편제 관련 (${r.evaluationSections.length}개)\n`);
             parts.push(r.evaluationSections.join("\n\n---\n\n"));
+          }
+          if (r.parseError) {
+            parts.push(`\n> ⚠️ 문서 자동 변환 실패: ${r.parseError}\n> 원본 파일을 직접 확인하세요.\n`, evaluationGuide(school, year));
+            continue;
           }
           if (r.needsOcr) {
             parts.push(`\n> ⚠️ 본문 추출이 빈약합니다(이미지 PDF 추정). 원본 직접 확인을 권장합니다.\n`, evaluationGuide(school, year));
