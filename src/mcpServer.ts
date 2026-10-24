@@ -11,6 +11,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import pkg from "../package.json";
 import { readFileSync, statSync, realpathSync } from "fs";
 import { resolve, extname } from "path";
 import { SchoolInfoClient, School, searchSchoolsByName } from "./client.js";
@@ -96,6 +97,15 @@ export function capText(text: string, hint: string): string {
   );
 }
 
+/**
+ * 도구 공통 annotations — 모든 도구는 외부 공개 데이터를 **읽기만** 하고(쓰기·삭제 없음) 같은 입력에 같은
+ * 결과를 돌려준다. 클라이언트가 확인 프롬프트 없이 호출해도 안전하다는 힌트. openWorldHint는 외부
+ * API(학교알리미·NEIS)에 의존함을 뜻한다.
+ */
+const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } as const;
+/** 정적 DB만 읽는 도구(외부 호출 없음) */
+const READ_ONLY_LOCAL = { ...READ_ONLY, openWorldHint: false } as const;
+
 function ok(text: string) {
   return { content: [{ type: "text" as const, text }] };
 }
@@ -115,7 +125,8 @@ const passthroughGate: HeavyGate = (fn) => fn();
 export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGate } = {}): McpServer {
   const localFiles = opts.localFiles !== false;
   const heavy = opts.heavyGate ?? passthroughGate;
-  const server = new McpServer({ name: "schoolinfo-mcp", version: "0.2.0" });
+  // 버전은 package.json과 동기화 (하드코딩 "0.2.0"이 0.3.0 릴리스 후에도 남아 있었음)
+  const server = new McpServer({ name: "schoolinfo-mcp", version: pkg.version });
 
   // ─── 0. 학교명 전국 검색 (지역/학교급 몰라도 됨) ────────
   server.tool(
@@ -124,6 +135,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
     {
       name: NAME.describe("학교명 또는 일부 (예: 개포중, 한밭초)"),
     },
+    READ_ONLY,
     async ({ name }) => {
       try {
         const hits = await searchSchoolsByName(name);
@@ -148,6 +160,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
       kind: z.enum(KINDS).describe("학교급"),
       name: NAME.optional().describe("학교명 (부분 일치, 생략 시 지역 전체 목록)"),
     },
+    READ_ONLY,
     async ({ sido, sgg, kind, name }) => {
       try {
         const client = getClient();
@@ -167,6 +180,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
     "list_disclosure_types",
     "조회 가능한 학교알리미 공시정보 항목(급식·학생수·교원·동아리·방과후 등 35종) 목록을 반환합니다.",
     {},
+    READ_ONLY_LOCAL,
     async () => {
       const lines = Object.entries(API_TYPES).map(([code, name]) => `- ${name} (코드 ${code})`);
       return ok(
@@ -191,6 +205,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
       item: SHORT_TEXT.min(1).describe("공시항목명 또는 코드 (예: 급식, 학년별·학급별 학생수, 09)"),
       year: YEAR.optional().describe("공시연도 (기본: 올해)"),
     },
+    READ_ONLY,
     async ({ sido, sgg, kind, name, item, year }) => {
       try {
         const client = getClient();
@@ -227,6 +242,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
       name: NAME.describe("학교명"),
       year: YEAR.optional().describe("공시연도 (기본: 올해)"),
     },
+    READ_ONLY,
     async ({ sido, sgg, kind, name, year }) => {
       try {
         const client = getClient();
@@ -256,6 +272,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
       sgg: SGG.optional().describe("시군구명 (동명이교 구분용, 예: 강남구)"),
       year: YEAR.optional().describe("학년도 (기본: 현재 학년도. 한국 학년도는 3월~익년 2월)"),
     },
+    READ_ONLY,
     async ({ sido, name, sgg, year }) => {
       try {
         if (!hasNeisKey())
@@ -286,6 +303,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
       avoid: z.array(z.string().trim().max(20)).max(20).optional().describe("회피할 알레르기 이름/번호 (예: ['우유','땅콩'] 또는 ['2','4'])"),
       nutrition: z.boolean().optional().describe("true면 9대 영양소까지 표시 (기본 칼로리만)"),
     },
+    READ_ONLY,
     async ({ sido, name, sgg, date, days, avoid, nutrition }) => {
       try {
         if (!hasNeisKey())
@@ -314,6 +332,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
       grade: GRADE_OR_CLASS.optional().describe("학년 (오늘 시간표용, 예: '1')"),
       class: GRADE_OR_CLASS.optional().describe("반 (오늘 시간표용, 예: '3')"),
     },
+    READ_ONLY,
     async ({ sido, name, sgg, kind, grade, class: cls }) => {
       try {
         if (!hasNeisKey())
@@ -356,6 +375,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
       kind: z.enum(KINDS).optional().describe("학교급 (지역 전체 모드에 필수)"),
       year: YEAR.optional().describe("학년도 (기본: 현재 학년도)"),
     },
+    READ_ONLY,
     async ({ sido, names, sgg, kind, year }) => {
       try {
         if (!hasNeisKey())
@@ -395,6 +415,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
       names: z.array(NAME).max(MAX_EXAM_SCHOOLS).optional().describe("비교할 학교명 배열 (생략 시 시군구 전체)"),
       year: YEAR.optional().describe("공시연도 (기본: 올해)"),
     },
+    READ_ONLY,
     async ({ sido, sgg, kind, names, year }) => {
       try {
         const rep = await getAreaReport(getClient(), sido, sgg, kind, year);
@@ -415,6 +436,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
       university: NAME.describe("대학명 (예: 서울대학교, 서울대)"),
       major: SHORT_TEXT.optional().describe("학과/모집단위 또는 단과대학명 (부분 일치, 예: 컴퓨터공학부, 의예과, 공과대학)"),
     },
+    READ_ONLY_LOCAL,
     async ({ university, major }) => {
       try {
         const uni = findAdmissionUniversity(university);
@@ -442,6 +464,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
       kind: z.enum(KINDS),
       name: NAME.describe("학교명"),
     },
+    READ_ONLY,
     async ({ sido, sgg, kind, name }) => {
       try {
         const client = getClient();
@@ -473,6 +496,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
       all: z.boolean().optional().describe("true면 전체 과목 파일을 모두 조회"),
       full: z.boolean().optional().describe("true면 전체 문서, 기본은 수행평가 섹션 위주"),
     },
+    READ_ONLY,
     async ({ sido, sgg, kind, name, year, semester, subject, grade, all, full }) => {
       try {
         const client = getClient();
@@ -586,6 +610,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
       all: z.boolean().optional().describe("true면 항목의 전체 첨부파일을 모두 조회"),
       full: z.boolean().optional().describe("true면 전체 문서, 기본은 편제 관련 섹션 위주"),
     },
+    READ_ONLY,
     async ({ sido, sgg, kind, name, year, subject, all, full }) => {
       try {
         const client = getClient();
@@ -647,6 +672,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
       {
         file_path: z.string().trim().min(1).max(1000).describe("내려받은 문서 파일의 절대 경로"),
       },
+      READ_ONLY_LOCAL,
       async ({ file_path }) => {
         try {
           const resolved = realpathSync(resolve(file_path));
