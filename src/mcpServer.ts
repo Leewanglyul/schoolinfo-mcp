@@ -194,16 +194,17 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
       sgg: z.string(),
       kind: z.enum(KINDS),
       name: z.string().describe("학교명"),
-      year: z.number().optional(),
+      year: z.number().optional().describe("공시연도 (기본: 올해)"),
     },
-    async ({ sido, sgg, kind, name }) => {
+    async ({ sido, sgg, kind, name, year }) => {
       try {
         const client = getClient();
         const { school, many } = await resolveSchool(client, sido, sgg, kind, name);
         if (many) return ok(`여러 학교가 검색됨:\n` + many.map((s) => `- ${s.name}`).join("\n"));
         if (!school) return ok(`학교를 찾을 수 없습니다: ${name}`);
 
-        const digest = await getParentDigest(client, school);
+        // year를 스키마에만 두고 핸들러에서 빠뜨려 항상 올해 자료만 반환하던 버그 수정
+        const digest = await getParentDigest(client, school, year);
         const parts = [formatSchool(school), ""];
         for (const d of digest) parts.push(formatDisclosure(d.name, d.rows, d.apiType), "");
         return ok(parts.join("\n"));
