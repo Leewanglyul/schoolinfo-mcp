@@ -83,6 +83,19 @@ async function resolveSchool(
   return { school: list[0] };
 }
 
+/**
+ * 도구 응답 상한(문자). 통합형 평가계획 원문은 수백 KB·표 수백 개라 그대로 돌려주면 LLM 컨텍스트가
+ * 넘친다. 웹(/api)의 DOC_MD_CAP(10만 자)과 같은 수준으로 자르고, 잘렸을 때 범위를 좁히는 방법을 안내한다.
+ */
+export const MAX_TOOL_TEXT = 100_000;
+export function capText(text: string, hint: string): string {
+  if (text.length <= MAX_TOOL_TEXT) return text;
+  return (
+    text.slice(0, MAX_TOOL_TEXT) +
+    `\n\n> ⚠️ 응답이 길어 앞부분 ${MAX_TOOL_TEXT.toLocaleString("ko-KR")}자만 표시했습니다. ${hint}`
+  );
+}
+
 function ok(text: string) {
   return { content: [{ type: "text" as const, text }] };
 }
@@ -546,7 +559,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
             parts.push(`\n### 전체 문서\n`, r.markdown);
           }
         }
-        return ok(parts.join("\n"));
+        return ok(capText(parts.join("\n"), "subject=과목명, grade=학년으로 범위를 좁히거나 full 없이 다시 요청하세요."));
       } catch (e: any) {
         // 자동 다운로드 실패 시 수동 안내로 폴백
         try {
@@ -612,7 +625,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
               `\n> 다른 파일은 subject="키워드", 전체는 all=true로 요청하세요.`
           );
         }
-        return ok(parts.join("\n"));
+        return ok(capText(parts.join("\n"), "subject=파일명 키워드로 문서를 특정하거나 full 없이 다시 요청하세요."));
       } catch (e: any) {
         // 자동 조회 실패 시 수동 안내로 폴백
         try {
@@ -650,7 +663,7 @@ export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGa
             parts.push("\n\n<details><summary>전체 문서</summary>\n");
           }
           parts.push(result.markdown);
-          return ok(parts.join("\n"));
+          return ok(capText(parts.join("\n"), "문서가 매우 큽니다. 원본을 직접 열어 확인하세요."));
         } catch (e: any) {
           return err(`오류: ${e.message}`);
         }
