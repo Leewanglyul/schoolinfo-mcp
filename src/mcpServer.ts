@@ -42,6 +42,18 @@ import {
 import { achievementGuide } from "./achievement.js";
 
 const KINDS = Object.keys(SCHOOL_KIND) as [SchoolKindName, ...SchoolKindName[]];
+
+// ─── 공용 입력 스키마 ──────────────────────────────────────────
+// HTTP(/api)는 학교명 40자·연도 2010~2100으로 자르지만 MCP는 원본 그대로 외부 API로 보냈다.
+// 두 경로의 입력 방어를 같은 수준으로 맞추고, LLM이 넘긴 공백·초장문·소수 연도를 조기에 거른다.
+const MAX_NAME_LEN = 40;
+const SIDO = z.string().trim().min(1).max(20);
+const SGG = z.string().trim().max(30);
+const NAME = z.string().trim().min(1).max(MAX_NAME_LEN);
+const YEAR = z.number().int().min(2010).max(2100);
+const SHORT_TEXT = z.string().trim().max(60);
+/** 학년·반 — NEIS 시간표 파라미터로 그대로 나가므로 숫자 1~2자리만 */
+const GRADE_OR_CLASS = z.string().trim().regex(/^\d{1,2}$/, "숫자 1~2자리");
 const ALLOWED_EXT = new Set([".hwp", ".hwpx", ".hwpml", ".pdf", ".xlsx", ".xls", ".docx"]);
 const MAX_FILE_SIZE = 200 * 1024 * 1024;
 /** 시험 캘린더 다학교 NEIS 조회 상한 — 응답 지연·rate 방어 */
@@ -91,7 +103,7 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
     "find_school",
     "학교명만으로 전국에서 학교를 찾습니다. 시도·시군구를 몰라도 됩니다. 결과의 지역·학교급으로 다른 도구(get_parent_digest, get_evaluation_plan 등)를 바로 호출하세요.",
     {
-      name: z.string().describe("학교명 또는 일부 (예: 개포중, 한밭초)"),
+      name: NAME.describe("학교명 또는 일부 (예: 개포중, 한밭초)"),
     },
     async ({ name }) => {
       try {
@@ -112,10 +124,10 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
     "search_school",
     "학교알리미에서 학교를 검색합니다. 시도·시군구·학교급·학교명으로 찾아 학교 기본정보를 반환합니다.",
     {
-      sido: z.string().describe("시도명 (예: 서울특별시, 경기도, 부산광역시 — 약칭 '서울'도 가능)"),
-      sgg: z.string().describe("시군구명 (예: 강남구, 수원시 장안구, 해운대구)"),
+      sido: SIDO.describe("시도명 (예: 서울특별시, 경기도, 부산광역시 — 약칭 '서울'도 가능)"),
+      sgg: SGG.describe("시군구명 (예: 강남구, 수원시 장안구, 해운대구)"),
       kind: z.enum(KINDS).describe("학교급"),
-      name: z.string().optional().describe("학교명 (부분 일치, 생략 시 지역 전체 목록)"),
+      name: NAME.optional().describe("학교명 (부분 일치, 생략 시 지역 전체 목록)"),
     },
     async ({ sido, sgg, kind, name }) => {
       try {
@@ -153,12 +165,12 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
     "get_disclosure",
     "특정 학교의 특정 공시정보를 조회합니다. 항목명(예: '급식', '학생수', '동아리')으로 찾습니다.",
     {
-      sido: z.string(),
-      sgg: z.string(),
+      sido: SIDO,
+      sgg: SGG,
       kind: z.enum(KINDS),
-      name: z.string().describe("학교명"),
-      item: z.string().describe("공시항목명 또는 코드 (예: 급식, 학년별·학급별 학생수, 09)"),
-      year: z.number().optional().describe("공시연도 (기본: 올해)"),
+      name: NAME.describe("학교명"),
+      item: SHORT_TEXT.min(1).describe("공시항목명 또는 코드 (예: 급식, 학년별·학급별 학생수, 09)"),
+      year: YEAR.optional().describe("공시연도 (기본: 올해)"),
     },
     async ({ sido, sgg, kind, name, item, year }) => {
       try {
@@ -190,11 +202,11 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
     "get_parent_digest",
     "학부모가 자주 보는 핵심 공시(학생수·급식·방과후·동아리·상담·학교폭력예방)를 한 번에 모아 보여줍니다.",
     {
-      sido: z.string(),
-      sgg: z.string(),
+      sido: SIDO,
+      sgg: SGG,
       kind: z.enum(KINDS),
-      name: z.string().describe("학교명"),
-      year: z.number().optional().describe("공시연도 (기본: 올해)"),
+      name: NAME.describe("학교명"),
+      year: YEAR.optional().describe("공시연도 (기본: 올해)"),
     },
     async ({ sido, sgg, kind, name, year }) => {
       try {
@@ -220,10 +232,10 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
     "get_school_schedule",
     "학교의 학사일정(시업식·중간/기말고사·방학·체험학습·개교기념일 등)을 NEIS 교육정보 개방 포털에서 조회합니다. 학교알리미 공시 35종엔 없는 항목입니다. 시도·학교명으로 찾고, 동명이교는 시군구로 구분합니다.",
     {
-      sido: z.string().describe("시도명 (예: 서울특별시, 경기도 — 약칭 '서울'도 가능)"),
-      name: z.string().describe("학교명 (예: 개포중학교)"),
-      sgg: z.string().optional().describe("시군구명 (동명이교 구분용, 예: 강남구)"),
-      year: z.number().optional().describe("학년도 (기본: 현재 학년도. 한국 학년도는 3월~익년 2월)"),
+      sido: SIDO.describe("시도명 (예: 서울특별시, 경기도 — 약칭 '서울'도 가능)"),
+      name: NAME.describe("학교명 (예: 개포중학교)"),
+      sgg: SGG.optional().describe("시군구명 (동명이교 구분용, 예: 강남구)"),
+      year: YEAR.optional().describe("학년도 (기본: 현재 학년도. 한국 학년도는 3월~익년 2월)"),
     },
     async ({ sido, name, sgg, year }) => {
       try {
@@ -247,12 +259,12 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
     "get_school_meal",
     "학교 급식 식단(요리·알레르기 유발식품·칼로리·영양)을 NEIS 교육정보 개방 포털에서 조회합니다. 학교알리미 공시의 '급식'은 연간 통계일 뿐 매일 식단표는 여기에만 있습니다. avoid에 알레르기(예: ['우유','땅콩'])를 주면 회피/안전 메뉴를 갈라 보여줍니다. 학교급 없이 시도·학교명으로 찾고, 동명이교는 시군구로 구분합니다.",
     {
-      sido: z.string().describe("시도명 (예: 서울특별시 — 약칭 '서울'도 가능)"),
-      name: z.string().describe("학교명 (예: 개포중학교)"),
-      sgg: z.string().optional().describe("시군구명 (동명이교 구분용, 예: 강남구)"),
-      date: z.string().optional().describe("기준일 YYYYMMDD (기본: 오늘)"),
-      days: z.number().optional().describe("기준일부터 조회할 일수 (기본 1, 최대 31). 7이면 일주일치"),
-      avoid: z.array(z.string()).optional().describe("회피할 알레르기 이름/번호 (예: ['우유','땅콩'] 또는 ['2','4'])"),
+      sido: SIDO.describe("시도명 (예: 서울특별시 — 약칭 '서울'도 가능)"),
+      name: NAME.describe("학교명 (예: 개포중학교)"),
+      sgg: SGG.optional().describe("시군구명 (동명이교 구분용, 예: 강남구)"),
+      date: z.string().trim().regex(/^\d{8}$/, "YYYYMMDD").optional().describe("기준일 YYYYMMDD (기본: 오늘)"),
+      days: z.number().int().optional().describe("기준일부터 조회할 일수 (기본 1, 최대 31). 7이면 일주일치"),
+      avoid: z.array(z.string().trim().max(20)).max(20).optional().describe("회피할 알레르기 이름/번호 (예: ['우유','땅콩'] 또는 ['2','4'])"),
       nutrition: z.boolean().optional().describe("true면 9대 영양소까지 표시 (기본 칼로리만)"),
     },
     async ({ sido, name, sgg, date, days, avoid, nutrition }) => {
@@ -276,12 +288,12 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
     "get_school_week",
     "이번주 학교 브리핑 — 급식(주간)·이번주 학사일정·다가오는 시험/방학 D-day를 한 번에 모아 보여줍니다. kind·grade·class를 모두 주면 오늘 시간표도 포함합니다. 학부모가 아침에 한 번 보는 요약용. 학교급 없이 시도·학교명으로 찾습니다.",
     {
-      sido: z.string().describe("시도명 (예: 서울특별시 — 약칭 '서울'도 가능)"),
-      name: z.string().describe("학교명 (예: 개포중학교)"),
-      sgg: z.string().optional().describe("시군구명 (동명이교 구분용)"),
+      sido: SIDO.describe("시도명 (예: 서울특별시 — 약칭 '서울'도 가능)"),
+      name: NAME.describe("학교명 (예: 개포중학교)"),
+      sgg: SGG.optional().describe("시군구명 (동명이교 구분용)"),
       kind: z.enum(KINDS).optional().describe("학교급 (오늘 시간표 조회용, grade·class와 함께)"),
-      grade: z.string().optional().describe("학년 (오늘 시간표용, 예: '1')"),
-      class: z.string().optional().describe("반 (오늘 시간표용, 예: '3')"),
+      grade: GRADE_OR_CLASS.optional().describe("학년 (오늘 시간표용, 예: '1')"),
+      class: GRADE_OR_CLASS.optional().describe("반 (오늘 시간표용, 예: '3')"),
     },
     async ({ sido, name, sgg, kind, grade, class: cls }) => {
       try {
@@ -319,11 +331,11 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
     "get_exam_calendar",
     "여러 학교의 시험(중간·기말고사) 일정을 한 캘린더로 모아 보여줍니다. 학원이 '우리 학원 학생들 학교 시험이 언제 몰리나'를 보거나, 학부모가 인근 학교 시험기간을 비교할 때 씁니다. names에 학교명 배열을 주면 그 학교들만, 생략하면 sgg+kind 지역 전체(최대 20개)를 집계합니다. NEIS 학사일정 기반(NEIS_API_KEY 필요).",
     {
-      sido: z.string().describe("시도명 (예: 서울특별시 — 약칭 '서울'도 가능)"),
-      names: z.array(z.string()).optional().describe("학교명 배열 (예: ['개포중학교','대청중학교']). 생략 시 지역 전체."),
-      sgg: z.string().optional().describe("시군구명 (지역 전체 모드에 필수, 동명이교 구분용)"),
+      sido: SIDO.describe("시도명 (예: 서울특별시 — 약칭 '서울'도 가능)"),
+      names: z.array(NAME).max(MAX_EXAM_SCHOOLS).optional().describe("학교명 배열 (예: ['개포중학교','대청중학교']). 생략 시 지역 전체."),
+      sgg: SGG.optional().describe("시군구명 (지역 전체 모드에 필수, 동명이교 구분용)"),
       kind: z.enum(KINDS).optional().describe("학교급 (지역 전체 모드에 필수)"),
-      year: z.number().optional().describe("학년도 (기본: 현재 학년도)"),
+      year: YEAR.optional().describe("학년도 (기본: 현재 학년도)"),
     },
     async ({ sido, names, sgg, kind, year }) => {
       try {
@@ -358,11 +370,11 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
     "get_school_report",
     "같은 시군구·학교급 학교들을 핵심 지표(학급당 인원·급식 운영방식/1식 식품비·교원 기간제 비율·동아리 수·1인당 장서)로 한 표에 비교합니다. 전학·입학 학교를 고를 때 씁니다. names에 학교명 배열을 주면 그 학교들만 추려 비교합니다.",
     {
-      sido: z.string().describe("시도명 (예: 서울특별시)"),
-      sgg: z.string().describe("시군구명 (예: 강남구)"),
+      sido: SIDO.describe("시도명 (예: 서울특별시)"),
+      sgg: SGG.describe("시군구명 (예: 강남구)"),
       kind: z.enum(KINDS).describe("학교급"),
-      names: z.array(z.string()).optional().describe("비교할 학교명 배열 (생략 시 시군구 전체)"),
-      year: z.number().optional().describe("공시연도 (기본: 올해)"),
+      names: z.array(NAME).max(MAX_EXAM_SCHOOLS).optional().describe("비교할 학교명 배열 (생략 시 시군구 전체)"),
+      year: YEAR.optional().describe("공시연도 (기본: 올해)"),
     },
     async ({ sido, sgg, kind, names, year }) => {
       try {
@@ -381,8 +393,8 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
     "get_admission_subjects",
     "대학 모집단위(학과)별 '전공 연계 권장 이수과목'을 조회합니다. 특정 대학·학과를 가려면 고등학교에서 어떤 선택과목(예: 미적분·기하·물리학Ⅱ)을 이수하는 게 좋은지 알려줍니다. university만 주면 그 대학 전체, major까지 주면 해당 학과만 보여줍니다.",
     {
-      university: z.string().describe("대학명 (예: 서울대학교, 서울대)"),
-      major: z.string().optional().describe("학과/모집단위 또는 단과대학명 (부분 일치, 예: 컴퓨터공학부, 의예과, 공과대학)"),
+      university: NAME.describe("대학명 (예: 서울대학교, 서울대)"),
+      major: SHORT_TEXT.optional().describe("학과/모집단위 또는 단과대학명 (부분 일치, 예: 컴퓨터공학부, 의예과, 공과대학)"),
     },
     async ({ university, major }) => {
       try {
@@ -406,10 +418,10 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
     "get_subject_achievement",
     "학교의 '교과별 학업성취 사항'(과목별 학기 평균점수·성취도 A~E 분포비율)을 확인하는 방법을 안내합니다. 이 항목은 학교알리미가 보안문자(캡차)로 보호해 자동 조회가 불가능하므로, 해당 학교 공시 화면으로 바로 가는 링크를 제공합니다. (중·고등학교만 공시)",
     {
-      sido: z.string(),
-      sgg: z.string(),
+      sido: SIDO,
+      sgg: SGG,
       kind: z.enum(KINDS),
-      name: z.string().describe("학교명"),
+      name: NAME.describe("학교명"),
     },
     async ({ sido, sgg, kind, name }) => {
       try {
@@ -429,14 +441,14 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
     "get_evaluation_plan",
     "학교의 '교과별 교수·학습 및 평가 운영 계획'(수행평가 주제·평가기준·반영비율)을 학교알리미에서 자동으로 내려받아 마크다운으로 변환하고 수행평가 표를 추출합니다.",
     {
-      sido: z.string(),
-      sgg: z.string(),
+      sido: SIDO,
+      sgg: SGG,
       kind: z.enum(KINDS),
-      name: z.string().describe("학교명"),
-      year: z.number().optional().describe("공시연도 (기본: 올해)"),
+      name: NAME.describe("학교명"),
+      year: YEAR.optional().describe("공시연도 (기본: 올해)"),
       semester: z.union([z.literal(1), z.literal(2)]).optional()
         .describe("1(1학기)|2(2학기) — 자료제출일(회차) 기준으로 해당 학기 자료를 찾음. 미지정 시 최신 제출분(보통 1학기)."),
-      subject: z.string().optional().describe("과목명(예: '국어', '공통국어2'). 파일명이 아니라 문서 '내용'에서 해당 과목의 평가표를 찾아 그 부분만 반환한다. 학년·전과목 통합본 학교에서도 동작."),
+      subject: SHORT_TEXT.optional().describe("과목명(예: '국어', '공통국어2'). 파일명이 아니라 문서 '내용'에서 해당 과목의 평가표를 찾아 그 부분만 반환한다. 학년·전과목 통합본 학교에서도 동작."),
       grade: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6)]).optional()
         .describe("학년(1~6) — 첨부파일이 학년별로 나뉜 학교(예: '...3학년 전과목...')에서 어느 파일을 받을지 고를 때만 씀. 1~3학년을 한 파일에 합본한 학교엔 파일명에 학년 표기가 없어 영향 없음(어차피 파일이 하나라 그대로 받아옴)."),
       all: z.boolean().optional().describe("true면 전체 과목 파일을 모두 조회"),
@@ -546,12 +558,12 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
     "get_curriculum_plan",
     "학교의 '학교교육과정 편성·운영 및 평가에 관한 사항'(2-가) 첨부문서를 학교알리미에서 자동으로 내려받아 마크다운으로 변환하고 교육과정 편제표(교과(군)별 이수단위/시간 배당)를 추출합니다. 특정 학년도 입학생 기준 편제는 year에 그 입학연도를 지정하세요.",
     {
-      sido: z.string(),
-      sgg: z.string(),
+      sido: SIDO,
+      sgg: SGG,
       kind: z.enum(KINDS),
-      name: z.string().describe("학교명"),
-      year: z.number().optional().describe("공시연도/입학연도 (기본: 올해)"),
-      subject: z.string().optional().describe("파일명 키워드 (한 항목에 파일이 여러 개일 때 특정 문서 선택)"),
+      name: NAME.describe("학교명"),
+      year: YEAR.optional().describe("공시연도/입학연도 (기본: 올해)"),
+      subject: SHORT_TEXT.optional().describe("파일명 키워드 (한 항목에 파일이 여러 개일 때 특정 문서 선택)"),
       all: z.boolean().optional().describe("true면 항목의 전체 첨부파일을 모두 조회"),
       full: z.boolean().optional().describe("true면 전체 문서, 기본은 편제 관련 섹션 위주"),
     },
@@ -614,7 +626,7 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
       "parse_evaluation_file",
       "학교알리미에서 내려받은 평가계획 문서(hwp/hwpx/pdf/docx)를 마크다운으로 변환하고 수행평가 관련 섹션을 추출합니다. (kordoc 기반)",
       {
-        file_path: z.string().describe("내려받은 문서 파일의 절대 경로"),
+        file_path: z.string().trim().min(1).max(1000).describe("내려받은 문서 파일의 절대 경로"),
       },
       async ({ file_path }) => {
         try {
