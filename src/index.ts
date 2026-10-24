@@ -29,6 +29,7 @@ export {
 export type { EvaluationResult, EvaluationFile, GradeOverview, StructuredEvaluation } from "./evaluation.js";
 
 import { SchoolInfoClient, School } from "./client.js";
+import { logError } from "./lib/log.js";
 import { API_TYPES, SCHOOL_KIND, SchoolKindName, resolveSido, resolveSggList } from "./codes.js";
 import labelsData from "./labels.json" with { type: "json" };
 
@@ -465,7 +466,7 @@ export async function getParentDigest(
         return { ...r, apiType };
       } catch (e: any) {
         // 실패를 빈 표로 삼키지 않고 error 플래그로 전파 (표시는 동일, check만 분기)
-        console.error(`[digest] ${apiType} 조회 실패:`, e?.message ?? e);
+        logError(`digest ${apiType}`, e);
         return { name: API_TYPES[apiType] ?? apiType, rows: [], apiType, error: true };
       }
     })

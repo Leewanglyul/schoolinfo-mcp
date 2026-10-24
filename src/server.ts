@@ -15,6 +15,7 @@ import { renderPage } from "./web.js";
 import { findAdmissionUniversity, searchAdmissionMajors, listAdmissionUniversities, commonSubjects } from "./admission.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildMcpServer } from "./mcpServer.js";
+import { logError, warnOnce } from "./lib/log.js";
 
 const PORT = Number(process.env.PORT) || 8080;
 const MAX_NAME_LEN = 40;
@@ -286,7 +287,14 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
       }
 
       if (!process.env.SCHOOLINFO_API_KEY) {
-        return json(res, 500, { error: "서버 설정 오류입니다." });
+        // Vercel처럼 listen 블록을 거치지 않는 환경에선 이 경고가 유일한 단서다.
+        warnOnce(
+          "config",
+          "SCHOOLINFO_API_KEY 환경변수가 설정되지 않아 공시 API를 비활성화했습니다. " +
+            "Vercel: 프로젝트 Settings → Environment Variables / fly: `fly secrets set SCHOOLINFO_API_KEY=...` 후 재배포하세요. " +
+            "발급: https://www.schoolinfo.go.kr/ng/go/pnnggo_a01_m0.do"
+        );
+        return json(res, 500, { error: "서버 설정 오류입니다. (운영자: SCHOOLINFO_API_KEY 환경변수를 확인하세요)" });
       }
       const client = createClient();
       const sido = (q.get("sido") ?? "").slice(0, 20);
@@ -372,7 +380,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           return json(res, 200, { school: school.name, year: y, items, upcoming: upcomingHighlights(items) });
         } catch (e: any) {
           // 상세는 로그에만, 사용자에겐 일반 문구 (전역 catch와 동일한 정보-비노출 정책)
-          console.error("[schedule]", e?.message ?? e);
+          logError("schedule", e);
           return json(res, 200, { school: school.name, items: [], note: "학사일정을 일시적으로 가져오지 못했습니다." });
         }
       }
@@ -392,7 +400,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           const items = await fetchMeal(ns.atptCode, ns.schoolCode, from, addDaysYmd(from, days - 1));
           return json(res, 200, { school: school.name, items });
         } catch (e: any) {
-          console.error("[meal]", e?.message ?? e);
+          logError("meal", e);
           return json(res, 200, { school: school.name, items: [], note: "급식을 일시적으로 가져오지 못했습니다." });
         }
       }
@@ -420,7 +428,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           const md = formatWeek(ns.name, range, { meals, weekEvents, upcoming, today });
           return json(res, 200, { school: school.name, markdown: md });
         } catch (e: any) {
-          console.error("[week]", e?.message ?? e);
+          logError("week", e);
           return json(res, 200, { school: school.name, markdown: "이번주 정보를 일시적으로 가져오지 못했습니다." });
         }
       }
@@ -431,7 +439,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           const data = await getAreaStudents(client, sido, sgg, kind, year);
           return json(res, 200, data);
         } catch (e: any) {
-          console.error("[compare]", e?.message ?? e);
+          logError("compare", e);
           return json(res, 200, { sido, sgg, kind, schools: [], note: "주변 학교 학생수를 가져오지 못했습니다." });
         }
       }
@@ -442,7 +450,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           const rep = await getAreaReport(client, sido, sgg, kind, year);
           return json(res, 200, { ...rep, markdown: formatAreaReport(rep) });
         } catch (e: any) {
-          console.error("[report]", e?.message ?? e);
+          logError("report", e);
           return json(res, 200, { sido, sgg, kind, schools: [], note: "비교 리포트를 가져오지 못했습니다." });
         }
       }
@@ -469,7 +477,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           const markdown = formatExamCalendar(`${sidoName} ${sgg ?? ""}`.trim(), results);
           return json(res, 200, { sido: sidoName, sgg, year: y, results, markdown });
         } catch (e: any) {
-          console.error("[exams]", e?.message ?? e);
+          logError("exams", e);
           return json(res, 200, { results: [], note: "시험 캘린더를 일시적으로 가져오지 못했습니다." });
         }
       }
@@ -551,7 +559,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           });
         } catch (e: any) {
           // 상세 에러(저수준 네트워크 문구 등)는 로그에만, 사용자에겐 안내문구 (다른 엔드포인트와 동일 정책)
-          console.error("[evaluation]", e?.message ?? e);
+          logError("evaluation", e);
           return json(res, 200, {
             school: school.name,
             mode: "doc",
@@ -566,7 +574,7 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
     res.writeHead(404, SECURITY_HEADERS).end("Not Found");
   } catch (e: any) {
     // 상세는 서버 로그에만, 사용자에겐 일반 메시지 (정보 노출 방지)
-    console.error("[server error]", e?.message ?? e);
+    logError("server error", e);
     // 스트리밍(/mcp, /api/download)에서 헤더가 이미 나갔다면 재기록 불가
     if (res.headersSent) return res.end();
     json(res, 500, { error: "일시적인 오류가 발생했습니다. 잠시 후 다시 시도하세요." });
