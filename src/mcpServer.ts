@@ -11,7 +11,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import pkg from "../package.json";
+import pkg from "../package.json" with { type: "json" };
 import { readFileSync, statSync, realpathSync } from "fs";
 import { resolve, extname } from "path";
 import { SchoolInfoClient, School, searchSchoolsByName, pickSchool } from "./client.js";
