@@ -90,12 +90,18 @@ function err(text: string) {
   return { content: [{ type: "text" as const, text }], isError: true };
 }
 
+/** 무거운 작업(다운로드+파싱)을 감싸는 게이트 — 원격 서버가 동시성 상한을 주입한다. 기본은 통과. */
+export type HeavyGate = <T>(fn: () => Promise<T>) => Promise<T>;
+const passthroughGate: HeavyGate = (fn) => fn();
+
 /**
  * 모든 도구가 등록된 McpServer를 생성한다 (transport 미연결).
  * @param opts.localFiles 서버 로컬 파일을 읽는 도구(parse_evaluation_file) 등록 여부. 기본 true.
+ * @param opts.heavyGate 평가계획/편제표 다운로드+파싱을 감싸는 동시성 게이트 (원격 HTTP용). 기본 통과.
  */
-export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
+export function buildMcpServer(opts: { localFiles?: boolean; heavyGate?: HeavyGate } = {}): McpServer {
   const localFiles = opts.localFiles !== false;
+  const heavy = opts.heavyGate ?? passthroughGate;
   const server = new McpServer({ name: "schoolinfo-mcp", version: "0.2.0" });
 
   // ─── 0. 학교명 전국 검색 (지역/학교급 몰라도 됨) ────────
@@ -486,7 +492,7 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
         }
         const targetGrade = grade ?? (picked ? gradeInFilename(picked.filename) : null);
         const seq = all ? undefined : picked?.seq;
-        const results = await autoFetchEvaluation(school, year, { all: !!all, seq, semester });
+        const results = await heavy(() => autoFetchEvaluation(school, year, { all: !!all, seq, semester }));
 
         // subject가 주어지면 문서 내용을 구조화해 해당 과목의 평가표만 골라낸다.
         // (전과목 통합본이 아니라 애초에 과목 하나짜리 문서면 structureEvaluation이 null을 반환하고
@@ -579,7 +585,7 @@ export function buildMcpServer(opts: { localFiles?: boolean } = {}): McpServer {
         const { docs } = await listEvaluationDocs(school, year, CURRICULUM_ITEM_SPEC);
         const seq = subject ? docs.find((d) => d.filename.includes(subject))?.seq : undefined;
         if (subject && !seq) return ok(`"${subject}"에 해당하는 파일을 찾을 수 없습니다. 파일 목록:\n` + docs.map((d) => `- ${d.filename}`).join("\n"));
-        const results = await autoFetchEvaluation(school, year, { all: !!all, seq }, CURRICULUM_ITEM_SPEC);
+        const results = await heavy(() => autoFetchEvaluation(school, year, { all: !!all, seq }, CURRICULUM_ITEM_SPEC));
         const parts: string[] = [`# ${school.name} — 학교교육과정 편성·운영 및 평가\n`];
         for (const r of results) {
           parts.push(`## 📄 ${r.filename} (${r.fileType})\n`);

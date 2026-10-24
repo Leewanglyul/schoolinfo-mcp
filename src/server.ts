@@ -4,6 +4,7 @@
 // 학부모가 브라우저에서 학교 검색 → 공시/수행평가 계획을 바로 확인.
 
 import http from "http";
+import { timingSafeEqual } from "crypto";
 import { pathToFileURL } from "url";
 import { readFileSync } from "fs";
 import { createClient, formatSchool, formatDisclosure, getParentDigest, getAreaStudents, getAreaReport, formatAreaReport, REGIONS, searchSchoolsByName, resolveSido } from "./index.js";
@@ -66,6 +67,34 @@ function rateLimitedHeavy(ip: string, now: number): boolean {
 // 다운로드+파싱(메모리·CPU 큰 작업) 전역 동시성 상한 — 요청 간 in-flight 폭주로 인한 OOM 방어.
 const MAX_HEAVY_CONCURRENT = 4;
 let heavyInFlight = 0;
+
+/**
+ * /mcp 경로의 무거운 도구(평가계획 다운로드+파싱)에 /api와 같은 동시성 상한을 적용하는 게이트.
+ * JSON-RPC 본문을 파싱하기 전엔 어느 도구인지 알 수 없어, 도구 핸들러 안에서 호출되도록 주입한다.
+ */
+async function heavyGate<T>(fn: () => Promise<T>): Promise<T> {
+  if (heavyInFlight >= MAX_HEAVY_CONCURRENT) throw new Error("요청이 많아 잠시 후 다시 시도하세요.");
+  heavyInFlight++;
+  try {
+    return await fn();
+  } finally {
+    heavyInFlight--;
+  }
+}
+
+/**
+ * 원격 MCP 선택적 인증. MCP_AUTH_TOKEN이 설정돼 있으면 `Authorization: Bearer <token>`을 요구하고,
+ * 비어 있으면 지금처럼 공개 엔드포인트로 동작한다(기본값 불변 → 기존 사용자 영향 없음).
+ * 비교는 길이 누출을 막기 위해 timingSafeEqual.
+ */
+export function mcpAuthorized(authorizationHeader: string | undefined, expected = process.env.MCP_AUTH_TOKEN?.trim()): boolean {
+  if (!expected) return true;
+  const m = /^Bearer\s+(.+)$/i.exec(authorizationHeader ?? "");
+  if (!m) return false;
+  const given = Buffer.from(m[1].trim());
+  const want = Buffer.from(expected);
+  return given.length === want.length && timingSafeEqual(given, want);
+}
 
 /** 실행 플랫폼 감지 — Vercel은 VERCEL=1, fly는 FLY_APP_NAME을 주입한다 */
 const ON_VERCEL = process.env.VERCEL === "1";
@@ -216,11 +245,25 @@ export async function handleRequest(req: http.IncomingMessage, res: http.ServerR
           }),
         );
       }
+      if (!mcpAuthorized(req.headers.authorization)) {
+        res.writeHead(401, {
+          "Content-Type": "application/json; charset=utf-8",
+          "WWW-Authenticate": 'Bearer realm="schoolinfo-mcp"',
+        });
+        return res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32001, message: "Unauthorized: Authorization: Bearer <token> 헤더가 필요합니다." },
+            id: null,
+          }),
+        );
+      }
       if (rateLimited(clientIp(req), now)) {
         res.writeHead(429, { "Content-Type": "application/json; charset=utf-8" });
         return res.end(JSON.stringify({ error: "요청이 너무 많습니다." }));
       }
-      const mcp = buildMcpServer({ localFiles: false }); // 원격: 서버 로컬파일 도구 제외
+      // 원격: 서버 로컬파일 도구 제외, 무거운 도구는 /api와 같은 동시성 상한 공유
+      const mcp = buildMcpServer({ localFiles: false, heavyGate });
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined, // stateless
         enableJsonResponse: true,
