@@ -66,12 +66,25 @@ function rateLimitedHeavy(ip: string, now: number): boolean {
 const MAX_HEAVY_CONCURRENT = 4;
 let heavyInFlight = 0;
 
-function clientIp(req: http.IncomingMessage): string {
-  // fly-client-ip는 fly 프록시가 설정하는 실제 클라이언트 IP (클라이언트가 보낸 값은 프록시가 덮어씀)
-  // → 신뢰 가능. x-forwarded-for는 위조 가능하므로 rate-limit 키로 신뢰하지 않는다(우회 방지).
+/** 실행 플랫폼 감지 — Vercel은 VERCEL=1, fly는 FLY_APP_NAME을 주입한다 */
+const ON_VERCEL = process.env.VERCEL === "1";
+
+/**
+ * rate limit 키로 쓸 클라이언트 IP.
+ * 플랫폼 프록시가 **덮어쓰는** 헤더만 신뢰한다(클라이언트가 임의로 보낸 값은 프록시가 대체하므로 위조 불가):
+ *  - fly:    fly-client-ip
+ *  - Vercel: x-real-ip (Vercel 엣지가 설정). 소켓 주소는 Vercel 내부 프록시라 모든 사용자가
+ *            한 IP로 뭉쳐 분당 상한이 '전체 사용자 합산'으로 걸리던 문제를 고친다.
+ * x-forwarded-for는 어느 플랫폼에서도 신뢰하지 않는다(위조 가능 → rate limit 우회).
+ */
+export function clientIp(req: Pick<http.IncomingMessage, "headers" | "socket">, onVercel = ON_VERCEL): string {
   const fly = req.headers["fly-client-ip"];
   if (typeof fly === "string" && fly.trim()) return fly.trim();
-  return req.socket.remoteAddress ?? "unknown";
+  if (onVercel) {
+    const real = req.headers["x-real-ip"];
+    if (typeof real === "string" && real.trim()) return real.trim();
+  }
+  return req.socket?.remoteAddress ?? "unknown";
 }
 
 /** 공시연도 검증: 정수 + 합리적 범위 */
